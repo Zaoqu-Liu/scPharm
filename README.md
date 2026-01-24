@@ -1,4 +1,4 @@
-# scPharm <img src="man/figures/logo.png" align="right" height="139" />
+# scPharm
 
 <!-- badges: start -->
 [![Documentation](https://img.shields.io/badge/docs-pkgdown-blue.svg)](https://zaoqu-liu.github.io/scPharm/)
@@ -29,9 +29,6 @@ The framework employs Multiple Correspondence Analysis (MCA) for dimensionality 
 
 ### Methodological Framework
 
-<p align="center">
-<img src="man/figures/workflow.png" width="80%" />
-</p>
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
