@@ -1,0 +1,90 @@
+url: https://zaoqu-liu.github.io/scPharm/
+
+template:
+  bootstrap: 5
+  bootswatch: flatly
+  bslib:
+    primary: "#2c3e50"
+    secondary: "#3498db"
+    success: "#27ae60"
+    danger: "#e74c3c"
+    warning: "#f39c12"
+    info: "#1abc9c"
+
+home:
+  title: scPharm - Single-Cell Pharmacogenomics
+  description: >
+    Identification of pharmacological subpopulations of single cells 
+    for precision medicine in cancers.
+
+authors:
+  Zaoqu Liu:
+    href: https://github.com/Zaoqu-Liu
+
+navbar:
+  structure:
+    left: [intro, reference, articles]
+    right: [search, github]
+  components:
+    intro:
+      text: Get Started
+      href: articles/quick-start.html
+    reference:
+      text: Reference
+      href: reference/index.html
+    articles:
+      text: Articles
+      menu:
+        - text: Quick Start Guide
+          href: articles/quick-start.html
+        - text: Algorithm and Methodology
+          href: articles/algorithm.html
+        - text: Visualization Guide
+          href: articles/visualization.html
+        - text: Advanced Usage
+          href: articles/advanced-usage.html
+    github:
+      icon: fab fa-github fa-lg
+      href: https://github.com/Zaoqu-Liu/scPharm
+
+reference:
+  - title: Core Functions
+    desc: Main analysis functions
+    contents:
+      - scPharmIdentify
+      - scPharmDr
+      - scPharmDse
+      - scPharmCombo
+      - scPharmGenNullDist
+  - title: Datasets
+    desc: Built-in reference data
+    contents:
+      - bulkdata
+      - gdscdata
+      - drug_info
+      - copykat_full.anno.hg20
+      - copykat_DNA.hg20
+      - copykat_cyclegenes
+
+articles:
+  - title: Getting Started
+    navbar: ~
+    contents:
+      - quick-start
+  - title: Methodology
+    navbar: ~
+    contents:
+      - algorithm
+  - title: Tutorials
+    navbar: ~
+    contents:
+      - visualization
+      - advanced-usage
+
+footer:
+  structure:
+    left: developed_by
+    right: built_with
+  components:
+    developed_by: >
+      Developed by [Zaoqu Liu](https://github.com/Zaoqu-Liu)

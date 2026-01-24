@@ -1,6 +1,7 @@
 # scPharm <img src="man/figures/logo.png" align="right" height="139" />
 
 <!-- badges: start -->
+[![Documentation](https://img.shields.io/badge/docs-pkgdown-blue.svg)](https://zaoqu-liu.github.io/scPharm/)
 [![R-universe](https://zaoqu-liu.r-universe.dev/badges/scPharm)](https://zaoqu-liu.r-universe.dev/scPharm)
 [![GitHub release](https://img.shields.io/github/v/release/Zaoqu-Liu/scPharm)](https://github.com/Zaoqu-Liu/scPharm/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,6 +9,8 @@
 <!-- badges: end -->
 
 **Identification of Pharmacological Subpopulations of Single Cells for Precision Medicine in Cancers**
+
+📚 **[Full Documentation](https://zaoqu-liu.github.io/scPharm/)** | 🚀 **[Quick Start](https://zaoqu-liu.github.io/scPharm/articles/quick-start.html)** | 📖 **[Algorithm Details](https://zaoqu-liu.github.io/scPharm/articles/algorithm.html)**
 
 ## Overview
 
@@ -25,6 +28,10 @@ The framework employs Multiple Correspondence Analysis (MCA) for dimensionality 
 | **Combination Therapy** | `scPharmCombo()` | Identifies synergistic drug combinations targeting complementary resistant subpopulations |
 
 ### Methodological Framework
+
+<p align="center">
+<img src="man/figures/workflow.png" width="80%" />
+</p>
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -97,67 +104,16 @@ dse_scores <- scPharmDse(result)
 combos <- scPharmCombo(result, dr_scores, topN = 5)
 ```
 
-## Detailed Usage
+## Documentation
 
-### Sample Type Selection
+For comprehensive documentation, visit **[https://zaoqu-liu.github.io/scPharm/](https://zaoqu-liu.github.io/scPharm/)**
 
-| Type | Description | CNV Detection | Use Case |
-|------|-------------|---------------|----------|
-| `"tissue"` | Primary tumor tissue | Automatic (via CopyKAT algorithm) | Patient-derived samples with stromal/immune infiltration |
-| `"cellline"` | Cancer cell lines | Not required | Pure tumor cell populations |
+### Tutorials
 
-### Cancer Type Specification
-
-scPharm supports all TCGA cancer type abbreviations:
-
-```r
-# Single cancer type
-result <- scPharmIdentify(seurat_obj, cancer = "BRCA", ...)
-
-# Multiple cancer types
-result <- scPharmIdentify(seurat_obj, cancer = c("BRCA", "LUAD"), ...)
-
-# Pan-cancer analysis
-result <- scPharmIdentify(seurat_obj, cancer = "pan", ...)
-```
-
-**Supported cancer types:** `BRCA`, `LUAD`, `LUSC`, `COAD`, `STAD`, `LIHC`, `KIRC`, `OV`, `PAAD`, `GBM`, `SKCM`, `HNSC`, `BLCA`, `PRAD`, `UCEC`, `ESCA`, `THCA`, and more.
-
-### Pre-annotated Tumor Cells
-
-For samples with known tumor cell annotations:
-
-```r
-# Provide tumor cell barcodes directly (skips CNV-based detection)
-tumor_barcodes <- c("AAACCTGAGAAACCAT-1", "AAACCTGAGATCACGG-1", ...)
-result <- scPharmIdentify(
-  seurat_obj,
-  type = "tissue",
-  tumor.cells = tumor_barcodes,
-  ...
-)
-```
-
-### Threshold Calibration
-
-Generate empirical thresholds from normal tissue samples:
-
-```r
-# Using normal tissue reference
-thresholds <- scPharmGenNullDist(
-  normal_seurat_obj,
-  cancer = "LUAD",
-  drug = "Erlotinib"
-)
-
-# Apply calibrated thresholds
-result <- scPharmIdentify(
-  seurat_obj,
-  threshold.s = thresholds$threshold.s,
-  threshold.r = thresholds$threshold.r,
-  ...
-)
-```
+- [Quick Start Guide](https://zaoqu-liu.github.io/scPharm/articles/quick-start.html) - Get started in minutes
+- [Algorithm and Methodology](https://zaoqu-liu.github.io/scPharm/articles/algorithm.html) - Understand the underlying methods
+- [Visualization Guide](https://zaoqu-liu.github.io/scPharm/articles/visualization.html) - Create publication-ready figures
+- [Advanced Usage](https://zaoqu-liu.github.io/scPharm/articles/advanced-usage.html) - Complex analysis scenarios
 
 ## Output Structure
 
@@ -178,12 +134,6 @@ The function returns a Seurat object with additional metadata columns:
 | `DRUG_ID` | GDSC drug identifier |
 | `DRUG_NAME` | Drug name |
 | `Dr` | Drug prioritization score (lower = more effective) |
-
-## Computational Considerations
-
-- **Memory**: Large datasets (>50,000 cells) may require 16+ GB RAM
-- **Runtime**: ~5-10 minutes per drug for 10,000 cells (single core)
-- **Parallelization**: Use `cores` parameter for multi-threading
 
 ## Citation
 

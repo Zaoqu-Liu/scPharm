@@ -1,0 +1,384 @@
+---
+title: "Algorithm and Methodology"
+author: "Zaoqu Liu"
+date: "`r Sys.Date()`"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+    fig_caption: true
+vignette: >
+  %\VignetteIndexEntry{Algorithm and Methodology}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+## Overview
+
+scPharm employs a multi-step computational pipeline to identify pharmacological subpopulations at single-cell resolution. This vignette describes the underlying algorithms and statistical methods.
+
+```{r load-packages, echo=FALSE}
+library(ggplot2)
+library(dplyr)
+```
+
+## Workflow Architecture
+
+```{r workflow-diagram, echo=FALSE, fig.cap="scPharm analytical workflow", fig.width=10, fig.height=6}
+# Create workflow diagram
+workflow_data <- data.frame(
+  step = factor(c("Input", "CNV Detection", "MCA Embedding", 
+                  "Cell Signatures", "GSEA", "Classification"),
+                levels = c("Input", "CNV Detection", "MCA Embedding", 
+                          "Cell Signatures", "GSEA", "Classification")),
+  x = c(1, 2, 3, 4, 5, 6),
+  y = rep(1, 6),
+  description = c(
+    "scRNA-seq\nSeurat Object",
+    "CopyKAT\nTumor Detection",
+    "Multiple\nCorrespondence\nAnalysis",
+    "Gene Set\nExtraction",
+    "Drug Sensitivity\nEnrichment",
+    "Sensitive/Resistant\nLabeling"
+  )
+)
+
+ggplot(workflow_data, aes(x = x, y = y)) +
+  geom_segment(aes(x = x, xend = x + 0.7, y = y, yend = y),
+               arrow = arrow(length = unit(0.3, "cm")),
+               data = workflow_data[1:5, ],
+               color = "#3498db", size = 1.5) +
+  geom_point(size = 20, color = "#2c3e50", shape = 21, fill = "#ecf0f1", stroke = 2) +
+  geom_text(aes(label = step), vjust = -2.5, fontface = "bold", size = 4) +
+  geom_text(aes(label = description), vjust = 1.5, size = 3, lineheight = 0.9) +
+  theme_void() +
+  theme(plot.margin = margin(40, 20, 40, 20)) +
+  coord_cartesian(ylim = c(0.5, 1.5), xlim = c(0.5, 6.5))
+```
+
+## Step 1: Copy Number Variation Detection
+
+For tissue samples containing mixed tumor and normal cells, scPharm employs an integrated CopyKAT-based algorithm to distinguish malignant cells.
+
+### Algorithm Overview
+
+The CNV detection follows these steps:
+
+1. **Gene Annotation**: Map genes to chromosomal positions using hg20 annotations
+2. **Expression Binning**: Aggregate expression into genomic bins (220 bins per chromosome)
+3. **Baseline Normalization**: Use normal cells or synthetic baseline as reference
+4. **Smoothing**: Apply Kalman filtering to reduce noise
+5. **Clustering**: Hierarchical clustering to identify aneuploid populations
+
+### Mathematical Framework
+
+For a gene $g$ at genomic position $p$, the relative copy number is estimated as:
+
+$$\text{CNV}_{g} = \log_2\left(\frac{E_g^{tumor}}{E_g^{baseline}} + 1\right)$$
+
+where $E_g$ represents the normalized expression level.
+
+```{r cnv-illustration, echo=FALSE, fig.cap="CNV profile across chromosomes", fig.width=10, fig.height=4}
+# Simulate CNV profile
+set.seed(42)
+n_bins <- 220 * 22
+chrom_lengths <- rep(220, 22)
+chrom_starts <- c(0, cumsum(chrom_lengths)[-22])
+
+cnv_profile <- data.frame(
+  bin = 1:n_bins,
+  chromosome = rep(1:22, each = 220),
+  cnv = rnorm(n_bins, 0, 0.3)
+)
+
+# Add amplifications and deletions
+cnv_profile$cnv[500:600] <- cnv_profile$cnv[500:600] + 0.8  # Amp on chr3
+cnv_profile$cnv[1500:1650] <- cnv_profile$cnv[1500:1650] - 0.6  # Del on chr8
+cnv_profile$cnv[3500:3700] <- cnv_profile$cnv[3500:3700] + 1.0  # Amp on chr17
+
+ggplot(cnv_profile, aes(x = bin, y = cnv)) +
+  geom_point(aes(color = factor(chromosome %% 2)), size = 0.5, alpha = 0.6) +
+  geom_hline(yintercept = c(-0.5, 0.5), linetype = "dashed", color = "red", alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "black") +
+  scale_color_manual(values = c("#3498db", "#2ecc71"), guide = "none") +
+  scale_x_continuous(breaks = chrom_starts + 110, labels = 1:22) +
+  labs(x = "Chromosome", y = "Log2 CNV Ratio", 
+       title = "Copy Number Variation Profile",
+       subtitle = "Showing amplifications (chr3, chr17) and deletion (chr8)") +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank(),
+        plot.title = element_text(face = "bold"))
+```
+
+## Step 2: Multiple Correspondence Analysis (MCA)
+
+MCA is used for dimensionality reduction, preserving the correspondence between genes and cells.
+
+### Why MCA?
+
+Unlike PCA which assumes continuous data, MCA is designed for categorical/count data and provides:
+
+- Joint embedding of cells and genes
+- Natural handling of sparse scRNA-seq data
+- Interpretable gene-cell associations
+
+### Mathematical Formulation
+
+Given a normalized expression matrix $\mathbf{X}$ with $n$ cells and $p$ genes:
+
+1. **Construct indicator matrix** $\mathbf{Z}$ by discretizing expression levels
+2. **Compute correspondence matrix**: 
+   $$\mathbf{S} = \mathbf{D}_r^{-1/2}(\mathbf{Z} - \mathbf{rc}^T)\mathbf{D}_c^{-1/2}$$
+3. **Perform SVD**: $\mathbf{S} = \mathbf{U\Sigma V}^T$
+4. **Extract coordinates**:
+   - Cell coordinates: $\mathbf{F} = \mathbf{D}_r^{-1/2}\mathbf{U\Sigma}$
+   - Gene coordinates: $\mathbf{G} = \mathbf{D}_c^{-1/2}\mathbf{V\Sigma}$
+
+```{r mca-visualization, echo=FALSE, fig.cap="MCA embedding showing cell-gene correspondence", fig.width=8, fig.height=6}
+# Simulate MCA embedding
+set.seed(123)
+n_points <- 300
+cell_data <- data.frame(
+  MCA1 = c(rnorm(100, -2, 0.8), rnorm(100, 2, 0.8), rnorm(100, 0, 1)),
+  MCA2 = c(rnorm(100, 1, 0.8), rnorm(100, 1, 0.8), rnorm(100, -2, 0.8)),
+  type = rep(c("Sensitive", "Resistant", "Other"), each = 100)
+)
+
+gene_data <- data.frame(
+  MCA1 = c(rnorm(20, -2.5, 0.3), rnorm(20, 2.5, 0.3), rnorm(10, 0, 0.5)),
+  MCA2 = c(rnorm(20, 1.5, 0.3), rnorm(20, 1.5, 0.3), rnorm(10, -2.5, 0.5)),
+  gene_type = c(rep("Sensitivity genes", 20), rep("Resistance genes", 20), 
+                rep("Other genes", 10))
+)
+
+ggplot() +
+  geom_point(data = cell_data, aes(x = MCA1, y = MCA2, color = type), 
+             size = 2, alpha = 0.6) +
+  geom_point(data = gene_data, aes(x = MCA1, y = MCA2, shape = gene_type),
+             size = 3, color = "black", alpha = 0.8) +
+  scale_color_manual(values = c("#e74c3c", "#27ae60", "#95a5a6"),
+                     name = "Cell Type") +
+  scale_shape_manual(values = c(17, 15, 8), name = "Gene Type") +
+  labs(x = "MCA Component 1", y = "MCA Component 2",
+       title = "MCA Joint Embedding",
+       subtitle = "Cells and genes in shared coordinate space") +
+  theme_minimal() +
+  theme(legend.position = "right",
+        plot.title = element_text(face = "bold"))
+```
+
+### C++ Implementation
+
+scPharm implements MCA using RcppArmadillo for computational efficiency:
+
+```cpp
+// Simplified MCA computation (actual implementation in src/mca.cpp)
+arma::mat SparseMCAStep1(arma::sp_mat& X) {
+    // Column sums and total
+    arma::vec col_sum = arma::vec(arma::sum(X, 0).t());
+    double total = arma::accu(X);
+    
+    // Compute standardized residuals
+    arma::mat Z = compute_residuals(X, col_sum, total);
+    
+    return Z;
+}
+```
+
+## Step 3: Cell Identity Signatures
+
+For each cell, we extract a gene signature based on its position in MCA space.
+
+### Distance Metric
+
+The association between cell $i$ and gene $j$ is computed as:
+
+$$d_{ij} = \sqrt{\sum_{k=1}^{K} (F_{ik} - G_{jk})^2}$$
+
+where $K$ is the number of MCA components.
+
+### Signature Extraction
+
+For each cell, the top $n$ genes (by distance) form its identity signature:
+
+$$\text{Signature}_i = \{g_1, g_2, ..., g_n\} \text{ where } d_{i,g_1} < d_{i,g_2} < ... < d_{i,g_n}$$
+
+## Step 4: Gene Set Enrichment Analysis
+
+GSEA quantifies the enrichment of drug sensitivity genes within each cell's signature.
+
+### GSEA Algorithm
+
+1. **Rank genes** by their association with the cell
+2. **Calculate running enrichment score** (ES):
+   $$ES = \max_{j}\left(\sum_{g_i \in S, i \leq j} \sqrt{\frac{N-|S|}{|S|}} - \sum_{g_i \notin S, i \leq j} \sqrt{\frac{|S|}{N-|S|}}\right)$$
+3. **Normalize** to obtain NES (Normalized Enrichment Score)
+
+```{r gsea-illustration, echo=FALSE, fig.cap="GSEA running enrichment score", fig.width=8, fig.height=5}
+# Simulate GSEA running score
+set.seed(456)
+n_genes <- 500
+gene_rank <- 1:n_genes
+
+# Drug sensitivity genes concentrated at top
+sensitivity_genes <- sort(sample(1:100, 30))
+
+# Calculate running score
+es <- numeric(n_genes)
+hit_score <- sqrt((n_genes - 30) / 30)
+miss_score <- sqrt(30 / (n_genes - 30))
+
+running_score <- 0
+for (i in 1:n_genes) {
+  if (i %in% sensitivity_genes) {
+    running_score <- running_score + hit_score
+  } else {
+    running_score <- running_score - miss_score
+  }
+  es[i] <- running_score
+}
+
+gsea_data <- data.frame(
+  rank = gene_rank,
+  enrichment_score = es,
+  is_hit = gene_rank %in% sensitivity_genes
+)
+
+ggplot(gsea_data) +
+  geom_line(aes(x = rank, y = enrichment_score), color = "#2980b9", size = 1) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_segment(data = gsea_data[gsea_data$is_hit, ],
+               aes(x = rank, xend = rank, y = -2, yend = -1.5),
+               color = "#e74c3c", alpha = 0.7) +
+  geom_hline(yintercept = max(es), color = "#27ae60", linetype = "dashed") +
+  annotate("text", x = 400, y = max(es) + 0.5, 
+           label = paste("ES =", round(max(es), 2)), 
+           color = "#27ae60", fontface = "bold") +
+  labs(x = "Gene Rank", y = "Enrichment Score",
+       title = "GSEA Running Enrichment Score",
+       subtitle = "Red bars indicate drug sensitivity genes") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold"))
+```
+
+### Drug Sensitivity Gene Sets
+
+Drug sensitivity gene sets are derived from GDSC2 database:
+
+- For each drug, genes are ranked by correlation with IC50
+- Top correlated genes → **Sensitivity signature**
+- Bottom correlated genes → **Resistance signature**
+
+## Step 5: Cell Classification
+
+### Gaussian Mixture Model
+
+Cell NES values are modeled as a mixture of Gaussian distributions:
+
+$$P(\text{NES}) = \pi_S \cdot \mathcal{N}(\mu_S, \sigma_S^2) + \pi_R \cdot \mathcal{N}(\mu_R, \sigma_R^2) + \pi_O \cdot \mathcal{N}(\mu_O, \sigma_O^2)$$
+
+```{r gmm-illustration, echo=FALSE, fig.cap="Gaussian Mixture Model for cell classification", fig.width=8, fig.height=5}
+# Simulate NES distribution
+set.seed(789)
+sensitive_nes <- rnorm(200, 1.5, 0.4)
+resistant_nes <- rnorm(150, -1.2, 0.5)
+other_nes <- rnorm(150, 0, 0.6)
+
+all_nes <- c(sensitive_nes, resistant_nes, other_nes)
+cell_type <- c(rep("Sensitive", 200), rep("Resistant", 150), rep("Other", 150))
+
+nes_data <- data.frame(NES = all_nes, Type = cell_type)
+
+# Density curves
+x_seq <- seq(-3, 3.5, length.out = 200)
+density_data <- data.frame(
+  x = rep(x_seq, 3),
+  y = c(dnorm(x_seq, 1.5, 0.4) * 200/500,
+        dnorm(x_seq, -1.2, 0.5) * 150/500,
+        dnorm(x_seq, 0, 0.6) * 150/500),
+  Type = rep(c("Sensitive", "Resistant", "Other"), each = 200)
+)
+
+ggplot() +
+  geom_histogram(data = nes_data, aes(x = NES, y = after_stat(density), fill = Type),
+                 alpha = 0.4, bins = 40, position = "identity") +
+  geom_line(data = density_data, aes(x = x, y = y, color = Type), size = 1.2) +
+  geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", alpha = 0.5) +
+  scale_fill_manual(values = c("#95a5a6", "#e74c3c", "#27ae60")) +
+  scale_color_manual(values = c("#95a5a6", "#e74c3c", "#27ae60")) +
+  labs(x = "Normalized Enrichment Score (NES)", y = "Density",
+       title = "Cell Classification via Gaussian Mixture Model",
+       subtitle = "Dashed lines indicate classification thresholds") +
+  theme_minimal() +
+  theme(legend.position = "right",
+        plot.title = element_text(face = "bold"))
+```
+
+### Classification Criteria
+
+Cells are classified based on NES thresholds:
+
+| Classification | Criterion |
+|----------------|-----------|
+| Sensitive | NES > threshold_s (default: 1.0) |
+| Resistant | NES < threshold_r (default: -1.0) |
+| Other | threshold_r ≤ NES ≤ threshold_s |
+
+## Step 6: Drug Scoring Metrics
+
+### Drug Prioritization Score (Dr)
+
+$$Dr = 1 - \left(\alpha \cdot \frac{n_S}{n_{tumor}} + \beta \cdot \overline{\text{NES}}_S\right)$$
+
+where:
+- $n_S$ = number of sensitive cells
+- $n_{tumor}$ = total tumor cells
+- $\overline{\text{NES}}_S$ = mean NES of sensitive cells
+- $\alpha, \beta$ = weighting parameters
+
+**Interpretation**: Lower Dr indicates better drug candidate.
+
+### Drug Side Effect Score (Dse)
+
+$$Dse = \frac{n_{S,adj}}{n_{adj}} \cdot \overline{\text{NES}}_{S,adj}$$
+
+where subscript $adj$ denotes adjacent (non-tumor) cells.
+
+**Interpretation**: Higher Dse indicates more potential side effects.
+
+## Computational Complexity
+
+| Step | Complexity | Notes |
+|------|------------|-------|
+| CNV Detection | O(n × g) | n = cells, g = genes |
+| MCA | O(min(n,g)³) | SVD computation |
+| Cell Signatures | O(n × k) | k = MCA components |
+| GSEA | O(n × d × g) | d = drugs |
+| Classification | O(n × d) | GMM fitting |
+
+## References
+
+1. Gao R, et al. (2021). Delineating copy number and clonal substructure in human tumors from single-cell transcriptomes. *Nature Biotechnology*.
+
+2. Subramanian A, et al. (2005). Gene set enrichment analysis: A knowledge-based approach. *PNAS*.
+
+3. Yang W, et al. (2013). Genomics of Drug Sensitivity in Cancer (GDSC). *Nucleic Acids Research*.
+
+4. Cortal A, et al. (2021). Gene signature extraction and cell identity recognition at the single-cell level with CelliD. *Nature Biotechnology*.
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

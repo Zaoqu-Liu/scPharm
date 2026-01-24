@@ -1,0 +1,239 @@
+---
+title: "Quick Start Guide"
+author: "Zaoqu Liu"
+date: "`r Sys.Date()`"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Quick Start Guide}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+## Introduction
+
+**scPharm** is a computational framework for identifying pharmacological subpopulations of single cells in cancer research. By integrating single-cell RNA sequencing (scRNA-seq) data with pharmacogenomics profiles from the GDSC2 database, scPharm enables:
+
+- Classification of cells into drug-sensitive and drug-resistant subpopulations
+- Prioritization of therapeutic agents based on tumor cell sensitivity
+- Prediction of drug side effects on non-malignant cells
+- Identification of synergistic drug combinations
+
+This vignette provides a quick introduction to get you started with scPharm.
+
+## Installation
+
+```{r install, eval=FALSE}
+# From R-universe (recommended)
+install.packages("scPharm", repos = "https://zaoqu-liu.r-universe.dev")
+
+# From GitHub
+remotes::install_github("Zaoqu-Liu/scPharm")
+```
+
+## Load Required Packages
+
+```{r load-packages}
+library(scPharm)
+library(Seurat)
+library(ggplot2)
+```
+
+## Prepare Example Data
+
+For demonstration, we'll create a simulated Seurat object with genes matching the GDSC2 database.
+
+```{r prepare-data}
+# Load reference gene annotations
+data(bulkdata, package = "scPharm")
+data(copykat_full.anno.hg20, package = "scPharm")
+
+# Get real gene names
+real_genes <- intersect(rownames(bulkdata), copykat_full.anno.hg20$hgnc_symbol)
+
+# Create simulated data
+set.seed(42)
+genes <- sample(real_genes, 3000)
+n_cells <- 200
+
+# Simulate count matrix
+counts <- matrix(rpois(length(genes) * n_cells, lambda = 10), 
+                 nrow = length(genes), ncol = n_cells)
+rownames(counts) <- genes
+colnames(counts) <- paste0("Cell_", seq_len(n_cells))
+
+# Add variation
+high_var_genes <- sample(length(genes), 300)
+counts[high_var_genes, ] <- counts[high_var_genes, ] + 
+  rpois(300 * n_cells, lambda = 25)
+
+# Create Seurat object
+seurat_obj <- CreateSeuratObject(counts = counts, 
+                                  min.cells = 3, 
+                                  min.features = 200)
+seurat_obj <- NormalizeData(seurat_obj, verbose = FALSE)
+
+print(seurat_obj)
+```
+
+## Basic Workflow
+
+### Step 1: Identify Pharmacological Subpopulations
+
+The core function `scPharmIdentify()` classifies cells based on their drug response profiles.
+
+```{r identify, eval=FALSE}
+# For cell line data (no CNV detection needed)
+result <- scPharmIdentify(
+  seurat_obj,
+  type = "cellline",      # or "tissue" for patient samples
+
+  cancer = "BRCA",        # TCGA cancer type
+  drug = "Docetaxel",     # Drug name or "all"
+  nmcs = 30,              # Number of MCA components
+  nfeatures = 150,        # Features for cell signatures
+  cores = 4               # Parallel cores
+)
+```
+
+For tissue samples with tumor/normal cell mixtures:
+
+```{r identify-tissue, eval=FALSE}
+# Automatic tumor detection via CNV analysis
+result <- scPharmIdentify(
+  seurat_obj,
+  type = "tissue",
+  cancer = "LUAD"
+)
+
+# Or provide known tumor cell barcodes
+tumor_cells <- c("Cell_1", "Cell_2", "Cell_3", ...)
+result <- scPharmIdentify(
+  seurat_obj,
+  type = "tissue",
+  cancer = "LUAD",
+  tumor.cells = tumor_cells
+)
+```
+
+### Step 2: Drug Prioritization
+
+Rank drugs by their effectiveness on tumor cells:
+
+```{r drug-ranking, eval=FALSE}
+# Compute drug prioritization scores
+dr_scores <- scPharmDr(result)
+
+# View top drugs
+head(dr_scores)
+```
+
+### Step 3: Predict Drug Side Effects
+
+For tissue samples, estimate potential toxicity on non-malignant cells:
+
+```{r side-effects, eval=FALSE}
+# Compute drug side effect scores
+dse_scores <- scPharmDse(result)
+
+# View results
+head(dse_scores)
+```
+
+### Step 4: Identify Drug Combinations
+
+Find synergistic drug pairs targeting complementary resistant populations:
+
+```{r combinations, eval=FALSE}
+# Identify combinations for top 5 drugs
+combos <- scPharmCombo(result, dr_scores, topN = 5)
+
+# View combination results
+names(combos)
+```
+
+## Understanding Output
+
+### Cell Labels
+
+After running `scPharmIdentify()`, the Seurat object contains new metadata columns:
+
+| Column | Description |
+|--------|-------------|
+| `cell.label` | Cell type: "tumor" or "adjacent" |
+| `scPharm_label_<drug>` | Drug response: "sensitive", "resistant", or "other" |
+| `scPharm_nes_<drug>` | Normalized Enrichment Score (NES) |
+
+```{r check-output, eval=FALSE}
+# Check metadata
+head(result@meta.data)
+
+# Count cell labels
+table(result@meta.data$cell.label)
+table(result@meta.data$`scPharm_label_Docetaxel`)
+```
+
+### Drug Prioritization Score (Dr)
+
+The `Dr` score integrates:
+
+- Proportion of sensitive cells
+- Mean NES of sensitive cells
+- Distribution of response across the tumor
+
+**Lower Dr = Better drug candidate**
+
+### Drug Side Effect Score (Dse)
+
+The `Dse` score measures potential toxicity:
+
+- Based on NES distribution in adjacent (non-tumor) cells
+- **Higher Dse = More potential side effects**
+
+## Parameter Guidelines
+
+| Parameter | Recommended Range | Notes |
+|-----------|-------------------|-------|
+| `nmcs` | 30-50 | Higher for complex datasets |
+| `nfeatures` | 100-200 | Balance between specificity and coverage |
+| `threshold.s` | Default or from `scPharmGenNullDist()` | Sensitive threshold |
+| `threshold.r` | Default or from `scPharmGenNullDist()` | Resistant threshold |
+| `cores` | 1-8 | Parallel processing |
+
+## Supported Cancer Types
+
+scPharm supports all major TCGA cancer types:
+
+```{r cancer-types, echo=FALSE}
+cancer_types <- c("BRCA", "LUAD", "LUSC", "COAD", "STAD", "LIHC", 
+                  "KIRC", "OV", "PAAD", "GBM", "SKCM", "HNSC", 
+                  "BLCA", "PRAD", "UCEC", "ESCA", "THCA", "pan")
+cat(paste(cancer_types, collapse = ", "))
+```
+
+Use `cancer = "pan"` for pan-cancer analysis.
+
+## Next Steps
+
+- See the [Algorithm Details](algorithm.html) vignette for methodology
+- See the [Visualization Guide](visualization.html) for plotting
+- See the [Advanced Usage](advanced-usage.html) for complex analyses
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

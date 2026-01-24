@@ -1,0 +1,408 @@
+---
+title: "Advanced Usage"
+author: "Zaoqu Liu"
+date: "`r Sys.Date()`"
+output: 
+  rmarkdown::html_vignette:
+    toc: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{Advanced Usage}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 8,
+  fig.height = 6,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+## Introduction
+
+This vignette covers advanced usage scenarios for scPharm, including:
+
+- Custom threshold calibration
+- Multi-drug analysis strategies
+- Combination therapy optimization
+- Integration with external tools
+- Performance tuning
+
+```{r load-packages}
+library(ggplot2)
+library(dplyr)
+```
+
+## 1. Threshold Calibration with Normal Tissue
+
+### Using scPharmGenNullDist
+
+For accurate cell classification, calibrating thresholds using normal tissue samples is recommended:
+
+```{r null-dist, eval=FALSE}
+library(scPharm)
+
+# Load normal tissue reference
+normal_seurat <- readRDS("normal_tissue.rds")
+
+# Generate null distribution
+null_dist <- scPharmGenNullDist(
+  normal_seurat,
+  cancer = "LUAD",
+  drug = "Erlotinib",
+  nmcs = 50,
+  nfeatures = 200
+)
+
+# Extract calibrated thresholds
+threshold_s <- null_dist$threshold.s
+threshold_r <- null_dist$threshold.r
+
+cat("Sensitive threshold:", threshold_s, "\n")
+cat("Resistant threshold:", threshold_r, "\n")
+```
+
+### Apply Calibrated Thresholds
+
+```{r apply-thresholds, eval=FALSE}
+# Load tumor sample
+tumor_seurat <- readRDS("tumor_sample.rds")
+
+# Run analysis with calibrated thresholds
+result <- scPharmIdentify(
+  tumor_seurat,
+  type = "tissue",
+  cancer = "LUAD",
+  drug = "Erlotinib",
+  threshold.s = threshold_s,
+  threshold.r = threshold_r
+)
+```
+
+### Threshold Selection Strategy
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Strict classification | Higher `threshold.s`, lower `threshold.r` |
+| Lenient classification | Lower `threshold.s`, higher `threshold.r` |
+| Balanced | Use `scPharmGenNullDist()` defaults |
+
+## 2. Multi-Drug Analysis
+
+### Pan-Drug Screening
+
+```{r pan-drug, eval=FALSE}
+# Analyze all available drugs
+result_all <- scPharmIdentify(
+  seurat_obj,
+  type = "cellline",
+  cancer = "BRCA",
+  drug = "all",
+  cores = 8  # Parallel processing
+)
+
+# Get drug ranking
+dr_scores <- scPharmDr(result_all)
+print(head(dr_scores, 20))
+```
+
+### Drug Class Analysis
+
+```{r drug-class, eval=FALSE}
+# Load drug metadata
+data(drug_info, package = "scPharm")
+
+# Filter by drug class
+chemo_drugs <- drug_info %>%
+  filter(DRUG_TYPE == "chemotherapy") %>%
+  pull(DRUG_NAME)
+
+targeted_drugs <- drug_info %>%
+  filter(DRUG_TYPE == "targeted") %>%
+  pull(DRUG_NAME)
+
+# Analyze specific drug classes
+result_chemo <- scPharmIdentify(
+  seurat_obj,
+  cancer = "BRCA",
+  drug = chemo_drugs
+)
+
+result_targeted <- scPharmIdentify(
+  seurat_obj,
+  cancer = "BRCA",
+  drug = targeted_drugs
+)
+```
+
+### Multi-Cancer Analysis
+
+```{r multi-cancer, eval=FALSE}
+# Analyze across multiple cancer contexts
+cancers <- c("BRCA", "LUAD", "COREAD")
+
+results <- lapply(cancers, function(cancer) {
+  result <- scPharmIdentify(
+    seurat_obj,
+    type = "cellline",
+    cancer = cancer,
+    drug = "Paclitaxel"
+  )
+  
+  # Extract NES values
+  nes_col <- grep("scPharm_nes_", colnames(result@meta.data), value = TRUE)
+  data.frame(
+    cancer = cancer,
+    mean_nes = mean(result@meta.data[[nes_col]], na.rm = TRUE),
+    sd_nes = sd(result@meta.data[[nes_col]], na.rm = TRUE)
+  )
+})
+
+# Combine results
+multi_cancer_df <- do.call(rbind, results)
+print(multi_cancer_df)
+```
+
+## 3. Combination Therapy Optimization
+
+### scPharmCombo Analysis
+
+```{r combo-basic, eval=FALSE}
+# Get drug ranking first
+dr_scores <- scPharmDr(result)
+
+# Identify combinations for top drugs
+combos <- scPharmCombo(result, dr_scores, topN = 10)
+
+# Examine results
+for (drug_name in names(combos)) {
+  cat("\n=== Drug:", drug_name, "===\n")
+  print(head(combos[[drug_name]]$combination_scores))
+}
+```
+### Combination Selection Criteria
+
+The combination score considers:
+
+1. **Complementarity**: Do drugs target different resistant populations?
+2. **Coverage**: What percentage of resistant cells become sensitive?
+3. **Synergy potential**: Based on known drug interactions
+
+```{r combo-viz, echo=FALSE, fig.cap="Drug combination evaluation"}
+# Simulate combination data
+set.seed(42)
+combo_data <- expand.grid(
+  Drug1 = c("Docetaxel", "Paclitaxel", "Erlotinib"),
+  Drug2 = c("Cisplatin", "Gefitinib", "Tamoxifen", "Imatinib")
+) %>%
+  mutate(
+    combo_score = runif(n(), 0.2, 0.9),
+    coverage = runif(n(), 0.4, 0.95)
+  )
+
+ggplot(combo_data, aes(x = Drug2, y = Drug1, fill = combo_score)) +
+  geom_tile(color = "white", size = 1) +
+  geom_text(aes(label = sprintf("%.0f%%", coverage * 100)), 
+            color = "white", fontface = "bold") +
+  scale_fill_gradient(low = "#e74c3c", high = "#27ae60",
+                      name = "Combo Score") +
+  labs(
+    title = "Drug Combination Matrix",
+    subtitle = "Numbers show coverage of resistant cells",
+    x = "Secondary Drug",
+    y = "Primary Drug"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank()
+  )
+```
+
+## 4. Integration with Seurat Workflows
+
+### Pre-computed Embeddings
+
+```{r seurat-integration, eval=FALSE}
+# Use existing Seurat clustering
+seurat_obj <- FindVariableFeatures(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj)
+seurat_obj <- RunPCA(seurat_obj)
+seurat_obj <- FindNeighbors(seurat_obj)
+seurat_obj <- FindClusters(seurat_obj)
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:30)
+
+# Run scPharm (MCA is computed independently)
+result <- scPharmIdentify(seurat_obj, ...)
+
+# Visualize with Seurat functions
+DimPlot(result, group.by = "scPharm_label_Docetaxel")
+FeaturePlot(result, features = "scPharm_nes_Docetaxel")
+```
+
+### Cluster-Level Analysis
+
+```{r cluster-analysis, eval=FALSE}
+# Aggregate NES by cluster
+cluster_summary <- result@meta.data %>%
+  group_by(seurat_clusters) %>%
+  summarise(
+    n_cells = n(),
+    mean_nes = mean(scPharm_nes_Docetaxel, na.rm = TRUE),
+    pct_sensitive = mean(scPharm_label_Docetaxel == "sensitive") * 100,
+    pct_resistant = mean(scPharm_label_Docetaxel == "resistant") * 100
+  )
+
+print(cluster_summary)
+```
+
+## 5. Performance Tuning
+
+### Memory Management
+
+For large datasets, consider:
+
+```{r memory, eval=FALSE}
+# Process in chunks
+cell_chunks <- split(colnames(seurat_obj), 
+                     ceiling(seq_along(colnames(seurat_obj)) / 5000))
+
+results <- lapply(cell_chunks, function(cells) {
+  subset_obj <- subset(seurat_obj, cells = cells)
+  scPharmIdentify(subset_obj, ...)
+})
+
+# Merge results
+final_result <- merge(results[[1]], results[-1])
+```
+
+### Parallel Processing
+
+```{r parallel, eval=FALSE}
+# Detect available cores
+n_cores <- parallel::detectCores() - 1
+
+# Run with multiple cores
+result <- scPharmIdentify(
+  seurat_obj,
+  drug = "all",
+  cores = n_cores
+)
+```
+
+### Parameter Optimization
+
+| Parameter | Effect on Speed | Effect on Accuracy |
+|-----------|-----------------|-------------------|
+| `nmcs` ↑ | Slower | Higher (to a point) |
+| `nfeatures` ↑ | Minimal | Higher specificity |
+| `cores` ↑ | Faster | None |
+
+## 6. Custom Drug Signatures
+
+### Using External Gene Sets
+
+```{r custom-signatures, eval=FALSE}
+# Load custom drug sensitivity signatures
+custom_signatures <- list(
+  DrugA_sensitive = c("GENE1", "GENE2", "GENE3", ...),
+  DrugA_resistant = c("GENE4", "GENE5", "GENE6", ...)
+)
+
+# Note: This requires modifying internal functions
+# Contact maintainer for custom signature integration
+```
+
+## 7. Quality Control
+
+### Pre-analysis Checks
+
+```{r qc-checks, eval=FALSE}
+# Check gene coverage
+data(bulkdata, package = "scPharm")
+gene_overlap <- intersect(rownames(seurat_obj), rownames(bulkdata))
+cat("Gene overlap:", length(gene_overlap), "/", nrow(bulkdata), "\n")
+
+# Minimum recommended: 5000 genes
+if (length(gene_overlap) < 5000) {
+  warning("Low gene overlap may affect accuracy")
+}
+
+# Check cell numbers
+if (ncol(seurat_obj) < 100) {
+  warning("Small cell numbers may lead to unstable estimates")
+}
+```
+
+### Post-analysis Validation
+
+```{r validation, eval=FALSE}
+# Check NES distribution
+nes_values <- result@meta.data$scPharm_nes_Docetaxel
+
+# Should be roughly normal/bimodal
+hist(nes_values, breaks = 50, main = "NES Distribution")
+
+# Check classification balance
+table(result@meta.data$scPharm_label_Docetaxel)
+```
+
+## 8. Troubleshooting
+
+### Common Issues
+
+| Issue | Possible Cause | Solution |
+|-------|----------------|----------|
+| All cells classified as "other" | Thresholds too strict | Lower threshold_s, raise threshold_r |
+| No tumor cells detected | CNV detection failed | Provide tumor.cells manually |
+| Memory error | Dataset too large | Process in chunks |
+| Slow performance | Too many drugs | Use parallel processing |
+
+### Debug Mode
+
+```{r debug, eval=FALSE}
+# Verbose output
+options(scPharm.verbose = TRUE)
+
+# Step-by-step execution
+result <- scPharmIdentify(
+  seurat_obj,
+  type = "cellline",
+  cancer = "BRCA",
+  drug = "Docetaxel"
+)
+```
+
+## 9. Exporting Results
+
+### To Data Frame
+
+```{r export-df, eval=FALSE}
+# Extract all scPharm columns
+scpharm_cols <- grep("^scPharm_|^cell\\.label$", 
+                     colnames(result@meta.data), value = TRUE)
+
+export_df <- result@meta.data[, scpharm_cols]
+export_df$cell_id <- rownames(export_df)
+
+write.csv(export_df, "scpharm_results.csv", row.names = FALSE)
+```
+
+### To Seurat Object
+
+```{r export-seurat, eval=FALSE}
+# Save annotated Seurat object
+saveRDS(result, "annotated_seurat.rds")
+```
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```
