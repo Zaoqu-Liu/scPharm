@@ -1,0 +1,18 @@
+#' GDSC2 Drug Information
+#'
+#' Drug metadata including targets and signaling pathways from the
+#' GDSC2 project.
+#'
+#' @format A data frame with 295 drugs and 4 variables:
+#' \describe{
+#'   \item{DRUG_ID}{GDSC drug identifier}
+#'   \item{DRUG_NAME}{Drug name}
+#'   \item{PUTATIVE_TARGET}{Known drug target(s)}
+#'   \item{PATHWAY_NAME}{Target signaling pathway}
+#' }
+#'
+#' @source GDSC \url{https://www.cancerrxgene.org/downloads/drug_data}
+#'
+#' @name drug_info
+#' @keywords datasets
+"drug_info"
