@@ -1,6 +1,6 @@
 Package: scPharm
 Title: Identification of Pharmacological Subpopulations of Single Cells for Precision Medicine in Cancers
-Version: 1.0.5
+Version: 1.0.6
 Authors@R: c(
     person("Zaoqu", "Liu", email = "liuzaoqu@163.com", role = c("aut", "cre"),
            comment = c(ORCID = "0000-0002-0452-742X")),

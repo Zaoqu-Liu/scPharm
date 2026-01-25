@@ -3,6 +3,44 @@
 # Adapted from copykat (Gao et al., Nature Biotechnology 2021)
 # ============================================================================
 
+# Windows-compatible parallel distance computation
+# parallelDist::parDist can crash R on Windows due to OpenMP threading issues
+.safe_parDist <- function(x, threads = 1, method = "euclidean") {
+  is_windows <- .Platform$OS.type == "windows"
+
+  if (is_windows || threads <= 1) {
+    # Use base R dist() on Windows - slower but stable
+    return(dist(x, method = method))
+  }
+
+  # On Unix/Mac with multiple threads, use parallelDist
+  if (requireNamespace("parallelDist", quietly = TRUE)) {
+    tryCatch(
+      parallelDist::parDist(x, threads = threads, method = method),
+      error = function(e) {
+        warning("parallelDist failed, falling back to base dist()")
+        dist(x, method = method)
+      }
+    )
+  } else {
+    dist(x, method = method)
+  }
+}
+
+# Windows-compatible parallel lapply
+# mclapply uses fork() which is not available on Windows
+.safe_mclapply <- function(X, FUN, mc.cores = 1) {
+  is_windows <- .Platform$OS.type == "windows"
+
+  if (is_windows || mc.cores <= 1) {
+    # Use sequential lapply on Windows
+    return(lapply(X, FUN))
+  }
+
+  # On Unix/Mac, use mclapply
+  parallel::mclapply(X, FUN, mc.cores = mc.cores)
+}
+
 #' Annotate genes with genomic coordinates
 #' @param mat Expression matrix
 #' @param ID.type Gene ID type
@@ -33,7 +71,7 @@
 #' @keywords internal
 #' @noRd
 .copykat_baseline_norm_cl <- function(norm.mat.smooth, min.cells = 5, n.cores = 1) {
-  d <- parallelDist::parDist(t(norm.mat.smooth), threads = n.cores, method = "euclidean")
+  d <- .safe_parDist(t(norm.mat.smooth), threads = n.cores, method = "euclidean")
   km <- 6
   fit <- hclust(d, method = "ward.D2")
   ct <- cutree(fit, k = km)
@@ -102,7 +140,7 @@
   names(predictions) <- colnames(CNA.mat)[seq_along(predictions)]
   preN <- names(predictions)[predictions == "diploid"]
 
-  d <- parallelDist::parDist(t(CNA.mat), threads = n.cores, method = "euclidean")
+  d <- .safe_parDist(t(CNA.mat), threads = n.cores, method = "euclidean")
   fit <- hclust(d, method = "ward.D2")
   ct <- cutree(fit, k = 6)
 
@@ -121,7 +159,7 @@
 #' @keywords internal
 #' @noRd
 .copykat_baseline_synthetic <- function(norm.mat, min.cells = 10, n.cores = 1) {
-  d <- parallelDist::parDist(t(norm.mat), threads = n.cores, method = "euclidean")
+  d <- .safe_parDist(t(norm.mat), threads = n.cores, method = "euclidean")
   fit <- hclust(d, method = "ward.D2")
   ct <- cutree(fit, k = 6)
 
@@ -196,7 +234,7 @@
     log(x)
   }
 
-  seg_res <- parallel::mclapply(seq_len(ncol(norm_sm)), seg_fn, mc.cores = n.cores)
+  seg_res <- .safe_mclapply(seq_len(ncol(norm_sm)), seg_fn, mc.cores = n.cores)
   logCNA <- matrix(unlist(seg_res), ncol = ncol(norm_sm), byrow = FALSE)
 
   list(logCNA = logCNA, breaks = BR)
@@ -345,7 +383,7 @@
     x <- dlm::dlmSmooth(norm_mat[, c], model)$s[-1]
     x - mean(x)
   }
-  smooth_res <- parallel::mclapply(seq_len(ncol(norm_mat)), smooth_fn, mc.cores = n.cores)
+  smooth_res <- .safe_mclapply(seq_len(ncol(norm_mat)), smooth_fn, mc.cores = n.cores)
   norm_smooth <- matrix(unlist(smooth_res), ncol = ncol(norm_mat), byrow = FALSE)
   colnames(norm_smooth) <- colnames(norm_mat)
 
@@ -360,7 +398,7 @@
     valid <- intersect(colnames(norm_smooth), norm.cell.names)
     if (length(valid) == 0) stop("Known normal cells not found")
     basel <- apply(norm_smooth[, valid, drop = FALSE], 1, median)
-    d <- parallelDist::parDist(t(norm_smooth), threads = n.cores, method = "euclidean")
+    d <- .safe_parDist(t(norm_smooth), threads = n.cores, method = "euclidean")
     fit <- hclust(d, method = "ward.D2")
     CL <- cutree(fit, k = 6)
     preN <- norm.cell.names
@@ -424,7 +462,7 @@
   message("  [CNV] Classifying cells...")
   classify_cells <- function(mat, ref_normal = preN) {
     if (distance == "euclidean") {
-      hc <- hclust(parallelDist::parDist(t(mat), threads = n.cores, method = distance), method = "ward.D")
+      hc <- hclust(.safe_parDist(t(mat), threads = n.cores, method = distance), method = "ward.D")
     } else {
       hc <- hclust(as.dist(1 - cor(mat, method = distance)), method = "ward.D")
     }
@@ -472,7 +510,7 @@
     a[abs(a - base_vals) <= 0.25 * cf] <- mean(a)
     a
   }
-  adj_res <- parallel::mclapply(seq_len(ncol(adj_mat)), adj_fn, mc.cores = n.cores)
+  adj_res <- .safe_mclapply(seq_len(ncol(adj_mat)), adj_fn, mc.cores = n.cores)
   final_mat <- t(t(matrix(unlist(adj_res), ncol = ncol(adj_mat))) -
                    apply(matrix(unlist(adj_res), ncol = ncol(adj_mat)), 2, mean))
   colnames(final_mat) <- colnames(adj_mat)
