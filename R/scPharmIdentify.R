@@ -56,7 +56,6 @@
 #' @importFrom sparseMatrixStats rowVars
 #' @importFrom irlba irlba
 #' @importFrom SeuratObject CreateDimReducObject
-#' @importFrom CelliD GetCellGeneSet
 #' @importFrom stats cor
 #' @importFrom fgsea fgseaMultilevel
 #' @import dplyr
@@ -223,9 +222,9 @@ scPharmIdentify <- function(object,
 
   # ========== Step 3: Cell identity signatures ==========
   message("Computing cell identity signatures...")
-  cell_geneset <- suppressMessages(GetCellGeneSet(
+  cell_geneset <- .cellGeneSet(
     object, reduction = "mca", dims = seq_len(nmcs), n.features = nfeatures
-  ))
+  )
 
   # ========== Step 4: Filter by cancer type ==========
   GDSC <- .filterCancerType(gdscdata, cancer)
