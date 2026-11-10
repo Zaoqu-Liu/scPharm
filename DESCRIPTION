@@ -23,7 +23,6 @@ Depends:
     R (>= 4.1),
     Seurat (>= 4.0.1)
 Imports:
-    CelliD,
     SeuratObject,
     fgsea (>= 1.16.0),
     Rcpp,
